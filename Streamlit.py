@@ -481,9 +481,9 @@ if st.button("Calculate Aerodynamics"):
     st.write("Total Viscous Drag:", viscous_drag)
     plot_flow_properties(flow_properties)
 
-
-def create_point_widgets(num_points):
-    # Generate a list of points with x and y coordinates
+# Drawing and getting points from the user
+def get_points():
+    num_points = st.number_input("Number of points for the shape:", min_value=3, value=5, step=1)
     points = []
     for i in range(num_points):
         x = st.number_input(f"X coordinate of Point {i+1}", key=f"x{i}")
@@ -491,20 +491,23 @@ def create_point_widgets(num_points):
         points.append((x, y))
     return points
 
-def main():
-    st.title("Generate and Update Points")
+def draw_shape(points):
+    fig, ax = plt.subplots()
+    ax.set_xlim(0, 1000)
+    ax.set_ylim(0, 1000)
+    xs, ys = zip(*points)
+    xs += (xs[0],)
+    ys += (ys[0],)
+    ax.plot(xs, ys, 'o-')
+    st.pyplot(fig)
 
-    # Input for number of points
-    num_points = st.number_input("Number of points for the shape:", min_value=3, value=3, step=1)
-
-    # Button to confirm the number of points and generate inputs for them
-    if st.button("Generate Shape"):
-        if num_points < 3:
-            st.error("Please enter a number of 3 or more.")
-        else:
-            points = create_point_widgets(num_points)
-            if st.button("Update Shape"):
-                # Process points or redraw shape
-                st.write("Points:", points)
-
-main()
+# Main interaction
+num_points = st.number_input("Number of points for the shape:", min_value=3, value=5, step=1)
+if st.button("Draw Shape"):
+    points = get_points()
+    draw_shape(points)
+    if st.button("Calculate Aerodynamics"):
+        flow_properties, total_drag, viscous_drag = calculate_aerodynamics(points, flow_props)
+        st.write("Flow Properties (Mach, Pressure, Density):", flow_properties)
+        st.write("Total Pressure Drag:", total_drag)
+        st.write("Total Viscous Drag:", viscous_drag)
