@@ -393,11 +393,11 @@ def draw_shape(points):
     st.pyplot(fig)
 
 def get_points():
-    num_points = st.number_input("Number of points for the shape:", min_value=3, value=5, step=1, key='num_points')
+    num_points = st.number_input("Number of points for the shape:", min_value=3, value=5, step=1)
     points = []
     for i in range(num_points):
-        x = st.number_input(f"X coordinate of Point {i+1}", value=0, step=1, key=f"x{i}")
-        y = st.number_input(f"Y coordinate of Point {i+1}", value=0, step=1, key=f"y{i}")
+        x = st.number_input(f"X coordinate of Point {i+1}", key=f"x{i}")
+        y = st.number_input(f"Y coordinate of Point {i+1}", key=f"y{i}")
         points.append((x, y))
     return points
 
@@ -483,11 +483,12 @@ if st.button("Calculate Aerodynamics"):
 
 # Drawing and getting points from the user
 def get_points():
-    num_points = st.number_input("Number of points for the shape:", min_value=3, value=5, step=1)
+    num_points = st.number_input("Number of points for the shape:", min_value=3, value=5, step=1, key='num_points')
     points = []
     for i in range(num_points):
         x = st.number_input(f"X coordinate of Point {i+1}", key=f"x{i}")
         y = st.number_input(f"Y coordinate of Point {i+1}", key=f"y{i}")
+
         points.append((x, y))
     return points
 
