@@ -408,7 +408,7 @@ if st.button("Draw Shape"):
     draw_shape(points)
 
 
-def update_points(button):
+def update_points():
 
 
     area = calculate_area(points)
@@ -475,7 +475,7 @@ for i in range(num_points):
     points.append((x, y))
 
 if st.button("Calculate Aerodynamics"):
-    flow_properties, total_drag, viscous_drag = calculate_aerodynamics(points, flow_props)
+    flow_properties, total_drag, viscous_drag = update_points()
     st.write("Flow Properties (Mach, Pressure, Density):", flow_properties)
     st.write("Total Pressure Drag:", total_drag)
     st.write("Total Viscous Drag:", viscous_drag)
@@ -507,7 +507,7 @@ if st.button("Draw Shape"):
     points = get_points()
     draw_shape(points)
     if st.button("Calculate Aerodynamics"):
-        flow_properties, total_drag, viscous_drag = calculate_aerodynamics(points, flow_props)
+        flow_properties, total_drag, viscous_drag = update_points()
         st.write("Flow Properties (Mach, Pressure, Density):", flow_properties)
         st.write("Total Pressure Drag:", total_drag)
         st.write("Total Viscous Drag:", viscous_drag)
