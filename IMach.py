@@ -15,7 +15,7 @@ import math
 # Assume m1 and Pin are given
 m1 = 3  # Upstream Mach number at the leftmost point
 Pin = 101325  # Incoming pressure in Pascals
-rhoin= 1.204 #kg/m^3
+rhoin = 1.204 #kg/m^3
 gamma=1.4
 
 
@@ -24,95 +24,65 @@ flow_props = [(m1,Pin,rhoin)]
 angles=[]
 
 def sort_points(points):
-    # Sort points based on x-coordinate primarily and y-coordinate secondarily to separate top and bottom profiles
-    points_sorted = sorted(points, key=lambda x: (x[0], x[1]))
-    top_profile = []
-    bottom_profile = []
-    
-    # Assuming the first and last points after sorting are the leftmost and rightmost points respectively
-    leftmost_point = points_sorted[0]
-    rightmost_point = points_sorted[-1]
-    
-    # Divide points into top and bottom profiles
-    for point in points_sorted:
-        if point[1] <= (leftmost_point[1] + rightmost_point[1]) / 2:
-            top_profile.append(point)
-        else:
-            bottom_profile.append(point)
-    
-    # Ensure top profile is sorted from left to right and bottom profile is sorted from right to left
-    bottom_profile = sorted(bottom_profile, key=lambda x: -x[0])
-    
+    if not points:
+        return [], []  # Return empty lists if there are no points
+
+    # Sort points by X-coordinate
+    points_sorted = sorted(points, key=lambda x: x[0])
+
+    # Determine the median Y-coordinate to separate top and bottom profiles
+    sorted_by_y = sorted(points, key=lambda x: x[1])
+    median_index = len(sorted_by_y) // 2
+    if len(sorted_by_y) % 2 == 0:
+        median_y = (sorted_by_y[median_index - 1][1] + sorted_by_y[median_index][1]) / 2
+    else:
+        median_y = sorted_by_y[median_index][1]
+
+    # Divide points into top and bottom profiles based on Y-coordinate
+    top_profile = [p for p in points_sorted if p[1] < median_y]
+    bottom_profile = [p for p in points_sorted if p[1] >= median_y]
+
     return top_profile, bottom_profile
 
 
 def calculate_clockwise(top_profile, flow_props):
-    # Start calculation from the leftmost point
-    leftmost_point_index = 0  # By definition of sorting, first index is leftmost
-    rightmost_point_index = len(top_profile) - 1  # Last index is rightmost
+    # Ensure there are enough points to perform calculations
+    if len(top_profile) < 3:
+        return 0, 0, []  # Return empty results if not enough points
 
+    # Initialize indices and vectors
+    leftmost_point_index = 0
+    rightmost_point_index = len(top_profile) - 1
+    
+    # Initialize the calculation by setting up an initial virtual shock
     current_index = leftmost_point_index
-
-    #setting up the inital. Its ALWAYS GOING TO BE AN OBLIQUE SHOCK AT THE FRONT
-    next_index = (current_index - 1) % len(points)
-    horizontal_vector = np.array([1, 0])  # Horizontal vector to the right
-    vec_to_next = np.array(points[next_index]) - np.array(points[leftmost_point_index])
-    vec_to_next_norm = vec_to_next / np.linalg.norm(vec_to_next)
-    dot_product = np.dot(horizontal_vector, vec_to_next_norm)
-    initial_angle_rad = np.arccos(np.clip(dot_product, -1.0, 1.0))
-    initial_angle_degrees = np.degrees(initial_angle_rad)
-    # Fetch the leftmost point using the leftmost_point_index
-    leftmost_point = points[leftmost_point_index]
-    #this virtual point guarantees a shockwave at the front
-    virtual_point = (leftmost_point[0] - 1, leftmost_point[1])
-    next_index = (current_index - 1) % len(points)
-    next_next_index = (next_index - 1) % len(points)
-    turning_angle, wave_type, flow_props = calculate_fp(virtual_point, points[next_index], points[current_index], flow_props)
-    #print(f"Point {leftmost_point_index + 1}): {initial_angle_degrees:.2f} degrees- {wave_type}")
-
+    next_index = current_index + 1
+    if next_index > rightmost_point_index:
+        return 0, 0, []  # Return if there are not enough points to proceed
 
     # Loop to calculate turning angles until we reach the rightmost point
-    while True:
+    segment_drags, segment_vdrags = [], []
+    while current_index < rightmost_point_index:
+        next_index = current_index + 1
+        if next_index > rightmost_point_index:
+            break  # Stop if there is no next point
 
-         # Calculate the indices for the next and the point after the next, ensuring clockwise direction
-        next_index = (current_index + 1) % len(top_profile)
-
-        # New condition: Stop when next index is about to be the rightmost point, thereby skipping the last segment
+        # Handle edge case for the last calculation
         if next_index == rightmost_point_index:
-            break
-
-        next_next_index = (next_index - 1) % len(top_profile)
+            next_next_index = rightmost_point_index  # Use the same point to avoid out-of-bounds
+        else:
+            next_next_index = next_index + 1
 
         # Perform the calculations for the current segment
-        turning_angle, wave_type, flow_props = calculate_fp(top_profile[current_index], top_profile[next_index], flow_props)
-        
+        turning_angle, wave_type, flow_props = calculate_fp(top_profile[current_index], top_profile[next_index], top_profile[next_next_index], gamma)
         current_index = next_index
 
-    segment_drags,segment_vdrags = calculate_drag(points, flow_props, leftmost_point_index, rightmost_point_index,angles)
+    segment_drags, segment_vdrags = calculate_drag(top_profile, flow_props, leftmost_point_index, rightmost_point_index, angles)
 
-    # Print the drag for each segment along with the indices of the connecting points
-    topside_drag = 0
-    viscous_drag = 0
-    #for segment_info, drag in segment_drags:
-        #start_point, end_point = segment_info
-        # Adding 1 to the point indices for human-readable output (1-indexed instead of 0-indexed)
-        #print(f"Segment {start_point+1}-{end_point+1}: Drag = {drag:.2f}")
+    topside_drag = sum(drag for _, drag in segment_drags if drag)  # Summing up all the drags
+    viscous_drag = sum(drag for _, drag in segment_vdrags if drag)
 
-        #topside_drag+=drag
-    for index, (segment_info, drag) in enumerate(segment_drags):
-        start_point, end_point = segment_info
-
-        # Exclude the drag calculation for the last segment
-        if index < len(segment_drags) - 1:  # Check if it's not the last segment
-            topside_drag += drag
-
-    for index, (segment_info, drag) in enumerate(segment_vdrags):
-        start_point, end_point = segment_info
-
-        # Exclude the drag calculation for the last segment
-        if index < len(segment_vdrags) - 1:  # Check if it's not the last segment
-            viscous_drag += drag
-    return topside_drag,viscous_drag, segment_vdrags
+    return topside_drag, viscous_drag, segment_vdrags
 
 
 def calculate_fp(a, b, c, gamma):
@@ -161,7 +131,7 @@ def calculate_fp(a, b, c, gamma):
     elif wave_type == "shock wave":
         # Handle shock wave calculations
         result = oblique_shock(np.radians(angle_degrees), last_mach, 280, last_pressure, last_rho, gamma)
-        M2, P2, rho2 = result[2], result[4], result[5]
+        M2, P2, rho2 = result[1], result[3], result[4]
 
         # Update flow properties list
         flow_props.append((M2, P2, rho2))
@@ -182,32 +152,57 @@ def temp_to_sos(T):
     return 20.05 * T**0.5
 
 
+def oblique_shock(deflection_angle, initial_mach, initial_temp, initial_pressure, initial_density, gamma):
+    #adapted from gusgordon on github
+    tan_theta = np.tan(deflection_angle)
+    found_shock = False
 
+    for beta in np.arange(1, 500) * np.pi / 1000:
+        r = 2 / np.tan(beta) * (initial_mach**2 * np.sin(beta)**2 - 1) / (initial_mach**2 * (gamma + np.cos(2 * beta)) + 2)
 
-def oblique_shock(theta, Ma, T, p, rho, gamma):
-
-#cited from gusgordon on github
-
-    x = np.tan(theta)
-    for B in np.arange(1, 500) * np.pi/1000:
-        r = 2 / np.tan(B) * (Ma**2 * np.sin(B)**2 - 1) / (Ma**2 * (gamma + np.cos(2 * B)) + 2)
-        if r > x:
+        if isinstance(r, np.ndarray):
+            raise TypeError("r should not be an array. Check input types.")
+        
+        if r > tan_theta:
+            found_shock = True
+            print(f"B = {beta}, r = {r}, tan_theta = {tan_theta}, initial mach = {initial_mach}, gamma = {gamma}")  # Debug output
             break
-    cot_a = np.tan(B) * ((gamma + 1) * Ma ** 2 / (2 * (Ma ** 2 * np.sin(B) ** 2 - 1)) - 1)
-    a = np.arctan(1 / cot_a)
 
-    Ma2 = 1 / np.sin(B - theta) * np.sqrt((1 + (gamma - 1)/2 * Ma**2 * np.sin(B)**2) / (gamma * Ma**2 * np.sin(B)**2 - (gamma - 1)/2))
+    if not found_shock:
+        print(f"B = {beta}, r = {r}, tan_theta = {tan_theta}, initial mach = {initial_mach}, gamma = {gamma}")  # Debug output
+        return None
+    
+        # Using absolute value of sine to ensure it's non-negative
+    sin_value = abs(np.sin(beta - deflection_angle))
 
-    h = Ma ** 2 * np.sin(B) ** 2
-    T2 = T * (2 * gamma * h - (gamma - 1)) * ((gamma - 1) * h + 2) / ((gamma + 1) ** 2 * h)
-    p2 = p * (2 * gamma * h - (gamma - 1)) / (gamma + 1)
-    rho2 = rho * ((gamma + 1) * h) / ((gamma - 1) * h + 2)
+    # Check to avoid division by zero, in case sin_value is still zero after absolute operation
+    if sin_value == 0:
+        print("sin(B - theta) resulted in zero even after taking absolute.")
+        return None
 
-    v2 = Ma2 * temp_to_sos(T2)
-    v_x = v2 * np.cos(a)
-    v_y = v2 * np.sin(a)
+    # Calculating Mach number post shock
+    sqrt_argument = (1 + (gamma - 1) / 2 * initial_mach**2 * np.sin(beta)**2) / (gamma * initial_mach**2 * np.sin(beta)**2 - (gamma - 1) / 2)
+    if sqrt_argument <= 0:
+        print("Sqrt argument is non-positive, possibly due to physical constraints.")
+        return None
 
-    return B, a, Ma2, T2, p2, rho2, v_x, v_y
+    post_mach = 1 / sin_value * np.sqrt(sqrt_argument)
+
+    cot_alpha = np.tan(beta) * ((gamma + 1) * initial_mach**2 / (2 * (initial_mach**2 * np.sin(beta)**2 - 1)) - 1)
+    alpha = np.arctan(1 / cot_alpha)
+
+    ## post_mach = 1 / np.sin(beta - deflection_angle) * np.sqrt((1 + (gamma - 1)/2 * initial_mach**2 * np.sin(beta)**2) / (gamma * initial_mach**2 * np.sin(beta)**2 - (gamma - 1)/2))
+    h = initial_mach ** 2 * np.sin(beta) ** 2
+    post_temp = initial_temp * (2 * gamma * h - (gamma - 1)) * ((gamma - 1) * h + 2) / ((gamma + 1) ** 2 * h)
+    post_pressure = initial_pressure * (2 * gamma * h - (gamma - 1)) / (gamma + 1)
+    post_density = initial_density * ((gamma + 1) * h) / ((gamma - 1) * h + 2)
+
+    post_speed = post_mach * temp_to_sos(post_temp)
+    post_velocity_x = post_speed * np.cos(alpha)
+    post_velocity_y = post_speed * np.sin(alpha)
+
+    return beta, alpha, post_mach, post_temp, post_pressure, post_density, post_velocity_x, post_velocity_y
+
 
 
 #expansion wave
@@ -360,14 +355,21 @@ WHITE = (255, 255, 255)
 RED = (255, 0, 0)
 POINT_RADIUS = 5
 points = []  # This will store the points
+dragging_point = None
 font = pygame.font.Font(None, 36)
 
 def draw():
     window.fill(WHITE)
     if len(points) > 1:
         pygame.draw.lines(window, RED, True, points, 1)
+    top_profile, bottom_profile = sort_points(points)
     for point in points:
         pygame.draw.circle(window, RED, point, POINT_RADIUS)
+        if point in top_profile:
+            label = font.render('top', True, (0, 0, 0))
+        else:
+            label = font.render('bottom', True, (0, 0, 0))
+        window.blit(label, (point[0] + 10, point[1] - 10))
     pygame.display.flip()
 
 def update_aerodynamics(points):
@@ -384,15 +386,15 @@ running = True
 while running:
     for event in pygame.event.get():
         if event.type == QUIT:
-            running = False
+            pygame.quit()
+            sys.exit()
         elif event.type == MOUSEBUTTONDOWN:
             points.append(event.pos)
-            update_aerodynamics(points)  # Recalculate whenever points are added
+            ##if len(points) > 3:
+                    ##update_aerodynamics(points)
         elif event.type == MOUSEMOTION:
             if event.buttons[0]:  # If mouse button is held down
                 points[-1] = event.pos
-                if len(points) > 3:
-                    update_aerodynamics(points)  # Update in real-time as the point is moved
 
     draw()
 
