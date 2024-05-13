@@ -18,10 +18,11 @@ Pin = 101325  # Incoming pressure in Pascals
 rhoin = 1.204 #kg/m^3
 gamma=1.4
 
-
-# Initialize the list with the normal shock pressure and Mach number
-flow_props = [(m1,Pin,rhoin)]
-angles=[]
+# Initialize the lists with the normal shock pressure and Mach number
+top_flow_props = [(m1, Pin, rhoin)]
+bottom_flow_props = [(m1, Pin, rhoin)]
+top_angles = []
+bottom_angles = []
 
 def sort_points(points):
     if not points:
@@ -44,100 +45,91 @@ def sort_points(points):
 
     return top_profile, bottom_profile
 
+def calculate_external_angle(a, b, c, is_top_profile):
+    # Create vectors from points
+    vec_ab = np.array([b[0] - a[0], b[1] - a[1]])
+    vec_bc = np.array([c[0] - b[0], c[1] - b[1]])
 
-def calculate_clockwise(top_profile, flow_props):
-    # Ensure there are enough points to perform calculations
-    if len(top_profile) < 3:
-        return 0, 0, []  # Return empty results if not enough points
+    # Calculate angles from horizontal
+    angle_ab = np.arctan2(vec_ab[1], vec_ab[0])
+    angle_bc = np.arctan2(vec_bc[1], vec_bc[0])
 
-    # Initialize indices and vectors
-    leftmost_point_index = 0
-    rightmost_point_index = len(top_profile) - 1
-    
-    # Initialize the calculation by setting up an initial virtual shock
-    current_index = leftmost_point_index
-    next_index = current_index + 1
-    if next_index > rightmost_point_index:
-        return 0, 0, []  # Return if there are not enough points to proceed
+    # Calculate the difference in angles
+    angle_diff = angle_bc - angle_ab
 
-    # Loop to calculate turning angles until we reach the rightmost point
+    # Normalize the angle to be the external angle on the shape's outside
+    if is_top_profile:
+        # Ensure the angle is clockwise and correct for full circles
+        if angle_diff > 0:
+            angle_diff -= 2 * np.pi
+    else:
+        # Ensure the angle is counterclockwise and correct for full circles
+        if angle_diff < 0:
+            angle_diff += 2 * np.pi
+
+    return np.degrees(angle_diff)  # Convert to degrees
+
+def calculate_profile_drag(profile, flow_props, angles, is_top_profile):
+    if len(profile) < 3:
+        return 0, 0, []  # Not enough points
+
+    # Find the actual leftmost and rightmost points by x-coordinate
+    x_coordinates = [point[0] for point in profile]
+    leftmost_point_index = x_coordinates.index(min(x_coordinates))
+    rightmost_point_index = x_coordinates.index(max(x_coordinates))
+
+    # Ensure correct traversal from leftmost to rightmost
+    if leftmost_point_index > rightmost_point_index:
+        leftmost_point_index, rightmost_point_index = rightmost_point_index, leftmost_point_index
+
     segment_drags, segment_vdrags = [], []
-    while current_index < rightmost_point_index:
-        next_index = current_index + 1
-        if next_index > rightmost_point_index:
-            break  # Stop if there is no next point
+    current_index = leftmost_point_index
 
-        # Handle edge case for the last calculation
-        if next_index == rightmost_point_index:
-            next_next_index = rightmost_point_index  # Use the same point to avoid out-of-bounds
-        else:
-            next_next_index = next_index + 1
+    # Traverse from leftmost to rightmost point
+    while current_index != rightmost_point_index:
+        next_index = current_index + 1 if current_index < rightmost_point_index else 0
+        next_next_index = next_index + 1 if next_index < rightmost_point_index else (0 if next_index != rightmost_point_index else 1)
 
-        # Perform the calculations for the current segment
-        turning_angle, wave_type, flow_props = calculate_fp(top_profile[current_index], top_profile[next_index], top_profile[next_next_index], gamma)
+        # Perform calculations for the current segment
+        turning_angle, wave_type, flow_props, angles = calculate_fp(profile[current_index], profile[next_index], profile[next_next_index], gamma, is_top_profile, flow_props, angles)
         current_index = next_index
 
-    segment_drags, segment_vdrags = calculate_drag(top_profile, flow_props, leftmost_point_index, rightmost_point_index, angles)
+    # Perform final calculation including the last point
+    if rightmost_point_index != leftmost_point_index:  # Check to ensure there's a segment to process
+        turning_angle, wave_type, flow_props, angles = calculate_fp(profile[current_index], profile[rightmost_point_index], profile[leftmost_point_index], gamma, is_top_profile, flow_props, angles)
 
-    topside_drag = sum(drag for _, drag in segment_drags if drag)  # Summing up all the drags
+    # Calculate drag assuming updated functions are available
+    segment_drags, segment_vdrags = calculate_drag(profile, flow_props, leftmost_point_index, rightmost_point_index, angles)
+    topside_drag = sum(drag for _, drag in segment_drags if drag)
     viscous_drag = sum(drag for _, drag in segment_vdrags if drag)
 
     return topside_drag, viscous_drag, segment_vdrags
 
 
-def calculate_fp(a, b, c, gamma):
-    # Calculate vectors from points a to b and b to c
-    vec_ab = np.array([b[0] - a[0], b[1] - a[1]])
-    vec_bc = np.array([c[0] - b[0], c[1] - b[1]])
 
-    # Calculate norms to check for zero-length vectors
-    norm_ab = np.linalg.norm(vec_ab)
-    norm_bc = np.linalg.norm(vec_bc)
 
-    if norm_ab == 0 or norm_bc == 0:
-        # Handling the case where no valid calculation can be made
-        return 0, "undefined", flow_props
-
-    # Normalize vectors
-    vec_ab_norm = vec_ab / norm_ab
-    vec_bc_norm = vec_bc / norm_bc
-
-    # Calculate the angle between vectors ab and bc
-    dot_product = np.dot(vec_ab_norm, vec_bc_norm)
-    angle = np.arccos(np.clip(dot_product, -1.0, 1.0))
-    angle_degrees = np.degrees(angle)
-
-    # Determine the wave type based on the direction of the cross product
-    cross_product = np.cross(vec_ab_norm, vec_bc_norm)
-    wave_type = "expansion wave" if cross_product > 0 else "shock wave"
-
-    # Retrieve the last flow properties
+def calculate_fp(a, b, c, gamma, is_top_profile, flow_props, angles):
+    angle_degrees = calculate_external_angle(a, b, c, is_top_profile)
+    wave_type = "expansion wave" if angle_degrees > 0 else "shock wave"
     last_mach, last_pressure, last_rho = flow_props[-1]
 
     if wave_type == "expansion wave":
-        # Handle expansion wave calculations
         nu_last_mach = prandtl_meyer_function(last_mach, gamma, 0)
-        nu_mach = nu_last_mach + np.radians(angle_degrees)
+        nu_mach = nu_last_mach + np.radians(abs(angle_degrees))
         new_mach = fsolve(prandtl_meyer_function, last_mach, args=(gamma, nu_mach))[0]
-
         new_pressure = calculate_exp_pressure(last_mach, new_mach, last_pressure, gamma)
         new_rho = calculate_exp_rho(last_mach, new_mach, last_rho, gamma)
-
-        # Update flow properties list
         flow_props.append((new_mach, new_pressure, new_rho))
-        # Assuming 'angles' is globally accessible; otherwise, it should be passed and returned
-        angles.append(angle_degrees)
-
+        angles.append(abs(angle_degrees))
     elif wave_type == "shock wave":
-        # Handle shock wave calculations
-        result = oblique_shock(np.radians(angle_degrees), last_mach, 280, last_pressure, last_rho, gamma)
-        M2, P2, rho2 = result[1], result[3], result[4]
+        result = oblique_shock(np.radians(abs(angle_degrees)), last_mach, 280, last_pressure, last_rho, gamma)
+        if result:
+            M2, P2, rho2 = result[2], result[4], result[5]
+            flow_props.append((M2, P2, rho2))
+            angles.append(abs(angle_degrees))
 
-        # Update flow properties list
-        flow_props.append((M2, P2, rho2))
-        angles.append(angle_degrees)
+    return angle_degrees, wave_type, flow_props, angles
 
-    return angle_degrees, wave_type, flow_props
 
 
 
@@ -219,15 +211,6 @@ def calculate_exp_pressure(M1,M2,P1,gamma):
     P2 = (((1 + ((gamma - 1) / 2) * M1**2) / (1 + ((gamma - 1) / 2) * M2**2))**(gamma / (gamma - 1)))*P1
     return P2
 
-
-
-def calculate_angle(point_a, point_b):
-    # Calculate angle with horizontal
-    dy = point_b[1] - point_a[1]
-    dx = point_b[0] - point_a[0]
-    angle_radians = np.arctan2(dy, dx)
-    angle_degrees = np.degrees(angle_radians)
-    return abs(angle_degrees)  # Return the absolute value of the angle
 
 
 
@@ -331,19 +314,6 @@ def calculate_drag(points, flow_props, leftmost_point_index, rightmost_point_ind
 
     return segment_drags, segment_vdrags
 
-# i need a function to calculate the drag on the bottom
-def calculate_bottom_distance(points):
-    # Extract x-coordinates from the points
-    x_coords = [point[0] for point in points]
-
-    # Find the maximum and minimum x-coordinates (rightmost and leftmost points)
-    max_x = max(x_coords)
-    min_x = min(x_coords)
-
-    # Calculate the distance between the rightmost and leftmost points
-    distance = max_x - min_x
-
-    return distance
 
 
 # Initialization
@@ -374,8 +344,11 @@ def draw():
 
 def update_aerodynamics(points):
     if len(points) >= 3:  # Ensure at least three points are available
+        top_profile, bottom_profile = sort_points(points)
         flow_properties = [(m1, Pin, rhoin)]  # Reset or use current values
-        top_drag, viscous_drag, segment_drags = calculate_clockwise(points, flow_props)
+        top_drag, top_viscous_drag, top_segment_drags = calculate_profile_drag(top_profile, top_flow_props, top_angles, is_top_profile=True)
+        bottom_drag, bottom_viscous_drag, bottom_segment_drags = calculate_profile_drag(bottom_profile, bottom_flow_props, bottom_angles, is_top_profile=False)
+
         # Update display or log results as needed
     else:
         print("Not enough points to perform aerodynamics calculations.")
@@ -390,8 +363,15 @@ while running:
             sys.exit()
         elif event.type == MOUSEBUTTONDOWN:
             points.append(event.pos)
-            ##if len(points) > 3:
-                    ##update_aerodynamics(points)
+            if len(points) >= 3:
+                    # Reset matrices before recalculating
+                    top_flow_props = [(m1, Pin, rhoin)]
+                    bottom_flow_props = [(m1, Pin, rhoin)]
+                    top_angles = []
+                    bottom_angles = []
+                    update_aerodynamics(points)
+                    print(f"Top Angles = {top_angles}; Bottom Angles = {bottom_angles}")
+                    print(f"Top flow propr = {top_flow_props}, Bottom flow propr = {bottom_flow_props}")
         elif event.type == MOUSEMOTION:
             if event.buttons[0]:  # If mouse button is held down
                 points[-1] = event.pos
